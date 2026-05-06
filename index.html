@@ -362,9 +362,13 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
         <div class="mnf" id="mnf"></div>
       </div>
     </div>
+    <div id="mdesc-wrap" style="padding:0 18px 14px;display:none">
+      <div id="mdesc" style="font-size:12px;color:var(--mut);font-family:var(--sans);line-height:1.6;background:var(--surf2);border-radius:9px;padding:12px;border:1px solid var(--brd)"></div>
+    </div>
     <div class="mac">
       <button class="mb mb-fav" id="mbfav" onclick="togFav()"></button>
       <button class="mb mb-read" id="mbread" onclick="togRead()"></button>
+      <button class="mb" id="mbretry" onclick="retrySearch()" style="background:rgba(127,90,240,.12);color:var(--blue);border:1px solid rgba(127,90,240,.28);display:none">🔍 Erneut suchen</button>
       <button class="mb mb-del" onclick="askDel()">🗑️ Aus Bibliothek löschen</button>
       <button class="mb mb-cls" onclick="closeModal()">Schließen</button>
     </div>
@@ -376,8 +380,9 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
   <div id="cb" onclick="event.stopPropagation()">
     <div class="ct" id="ct">Buch löschen?</div>
     <div class="cs" id="csub"></div>
-    <div class="cbtns">
-      <button class="cbtn cc" onclick="closeConf()">Abbrechen</button>
+    <div class="cbtns" id="cbtns">
+      <button class="cbtn cc" onclick="closeConf()" id="ccancel">Abbrechen</button>
+      <button class="cbtn" id="cextra" onclick="confOkAddOrReplace(true)" style="display:none;background:var(--org);color:#fff">Ersetzen</button>
       <button class="cbtn co" id="cok" onclick="confOk()">Löschen</button>
     </div>
   </div>
@@ -507,19 +512,74 @@ function parse(raw){
   return{t,a};
 }
 
+// ===================== SEARCH HELPERS =====================
+function normalizeStr(s){
+  // Normalize umlauts both ways: ä→ae, ö→oe, ü→ue AND ae→ä etc. for flexible matching
+  return String(s)
+    .replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue')
+    .replace(/Ä/g,'Ae').replace(/Ö/g,'Oe').replace(/Ü/g,'Ue')
+    .replace(/ß/g,'ss')
+    .replace(/,/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function isAbbreviatedName(name){
+  // Detect patterns like "C. B. Clive" or "J.K. Rowling"
+  return /^([A-Z]\.\s*)+[A-Z][a-z]+/.test(name.trim());
+}
+
+function extractLastName(name){
+  const parts=name.replace(/,/g,'').trim().split(/\s+/);
+  return parts[parts.length-1];
+}
+
+async function olSearch(titleQ, authorQ){
+  let q=authorQ
+    ?`title:${encodeURIComponent(titleQ)}+author:${encodeURIComponent(authorQ)}`
+    :`title:${encodeURIComponent(titleQ)}`;
+  const r=await fetch(`https://openlibrary.org/search.json?q=${q}&limit=1&fields=title,author_name,subject,cover_i,first_publish_year,key`);
+  return r.json();
+}
+
+async function fetchDescription(key){
+  try{
+    const r=await fetch(`https://openlibrary.org${key}.json`);
+    const d=await r.json();
+    let desc=d.description;
+    if(desc&&typeof desc==='object') desc=desc.value;
+    if(desc) return String(desc).slice(0,600)+(desc.length>600?'…':'');
+  }catch(e){}
+  return null;
+}
+
 // ===================== FETCH BOOK =====================
 async function fetchBk(raw){
   const{t,a}=parse(raw);
-  const q=a?`title:${encodeURIComponent(t)}+author:${encodeURIComponent(a)}`:`title:${encodeURIComponent(t)}`;
-  try{
-    const r=await fetch(`https://openlibrary.org/search.json?q=${q}&limit=1&fields=title,author_name,subject,cover_i,first_publish_year`);
-    const d=await r.json();
-    if(d.docs&&d.docs.length>0){
-      const b=d.docs[0];
-      return{title:b.title||t,author:b.author_name?.[0]||a||'Unbekannt',genre:detGenre(b.subject||[]),cover:b.cover_i?`https://covers.openlibrary.org/b/id/${b.cover_i}-M.jpg`:null,year:b.first_publish_year||null,found:true};
-    }
-  }catch(e){}
-  return{title:t,author:a||'Unbekannt',genre:'Unbekannt',cover:null,year:null,found:false};
+  // Clean: remove commas, normalize umlauts
+  const tClean=normalizeStr(t);
+  const aClean=a?normalizeStr(a):'';
+
+  const attempts=[];
+  // 1. Normal search
+  attempts.push({title:tClean, author:aClean});
+  // 2. If author looks abbreviated (C. B. Clive) → use only last name
+  if(aClean&&isAbbreviatedName(a)){
+    const lastName=extractLastName(aClean);
+    attempts.push({title:tClean, author:lastName});
+  }
+  // 3. Title only fallback
+  if(aClean) attempts.push({title:tClean, author:''});
+
+  for(const att of attempts){
+    try{
+      const d=await olSearch(att.title, att.author);
+      if(d.docs&&d.docs.length>0){
+        const b=d.docs[0];
+        const desc=b.key?await fetchDescription(b.key):null;
+        return{title:b.title||t,author:b.author_name?.[0]||a||'Unbekannt',genre:detGenre(b.subject||[]),cover:b.cover_i?`https://covers.openlibrary.org/b/id/${b.cover_i}-M.jpg`:null,year:b.first_publish_year||null,description:desc,found:true};
+      }
+    }catch(e){}
+  }
+  return{title:t,author:a||'Unbekannt',genre:'Unbekannt',cover:null,year:null,description:null,found:false};
 }
 
 function detGenre(s){
@@ -540,29 +600,63 @@ function detGenre(s){
 }
 
 // ===================== PROCESS FILE =====================
+let allParsedEntries=[]; // for chunked uploads
+
 async function procFile(file){
-  books=[];
+  // Chunked upload: if books exist, ask whether to add or replace
+  if(books.length>0){
+    pendingFile=file;
+    document.getElementById('ct').textContent='Liste hinzufügen oder ersetzen?';
+    document.getElementById('csub').textContent=`Du hast bereits ${books.length} Bücher. Möchtest du die neue Liste hinzufügen oder die Bibliothek ersetzen?`;
+    document.getElementById('cok').textContent='Hinzufügen';
+    document.getElementById('cok').className='cbtn';
+    document.getElementById('cok').style.background='var(--grn)';
+    confAction='addOrReplace';
+    document.getElementById('cextra').style.display='';
+    document.getElementById('cok').style.background='var(--grn)';
+    document.getElementById('cok').style.color='#fff';
+    document.getElementById('conf').classList.add('open');
+    return;
+  }
+  await doProcessFile(file, false);
+}
+
+let pendingFile=null;
+async function confOkAddOrReplace(replace){
+  const f=pendingFile; pendingFile=null;
+  document.getElementById('cok').style.background='';
+  closeConf(); confAction=null;
+  await doProcessFile(f, !replace);
+}
+
+async function doProcessFile(file, append){
   document.getElementById('uz').style.display='none';
-  document.getElementById('lctrl').style.display='none';
-  document.getElementById('lgrid').style.display='none';
-  document.getElementById('llist').style.display='none';
-  document.getElementById('lib-vbtns').style.display='none';
   document.getElementById('pw').classList.add('show');
+  if(!append){
+    books=[];
+    document.getElementById('lctrl').style.display='none';
+    document.getElementById('lgrid').style.display='none';
+    document.getElementById('llist').style.display='none';
+    document.getElementById('lib-vbtns').style.display='none';
+  }
 
   const reader=new FileReader();
   reader.onload=async(e)=>{
     const wb=XLSX.read(e.target.result,{type:'binary'});
     const ws=wb.Sheets[wb.SheetNames[0]];
     const rows=XLSX.utils.sheet_to_json(ws,{header:1});
+    const existingRaws=new Set(books.map(b=>b.raw));
     const entries=rows.filter(r=>r[0]&&String(r[0]).trim().length>0)
-      .map(r=>({raw:String(r[0]).trim(),folder:r[1]?String(r[1]).trim():''}));
+      .map(r=>({raw:String(r[0]).trim(),folder:r[1]?String(r[1]).trim():''}))
+      .filter(e=>!append||!existingRaws.has(e.raw)); // skip duplicates when appending
     const total=entries.length;
+    const startId=books.length>0?Math.max(...books.map(b=>b.id))+1:0;
     document.getElementById('plabel').textContent=`🔍 Recherchiere 0/${total} Bücher…`;
 
     for(let i=0;i<entries.length;i++){
       const{raw,folder}=entries[i];
       const bk=await fetchBk(raw);
-      books.push({id:i,raw,folder,fav:false,read:false,...bk});
+      books.push({id:startId+i,raw,folder,fav:false,read:false,...bk});
       const pct=Math.round(((i+1)/total)*100);
       document.getElementById('pfill').style.width=pct+'%';
       document.getElementById('plabel').textContent=`🔍 Recherchiere ${i+1}/${total} Bücher…`;
@@ -572,7 +666,6 @@ async function procFile(file){
     }
 
     document.getElementById('pw').classList.remove('show');
-    // SAVE TO DB
     await saveAllToDB();
     toast(`💾 ${books.length} Bücher gespeichert`);
     showLib();
@@ -615,11 +708,13 @@ function setG(g){lf.genre=g;document.getElementById('gsel').value=g;buildPills()
 // ===================== STATS =====================
 function updStats(){
   const tot=books.length,favs=books.filter(b=>b.fav).length,rd=books.filter(b=>b.read).length;
+  const unk=books.filter(b=>!b.found).length;
   document.getElementById('stats').innerHTML=`
     <div class="sc"><div class="sn">${tot}</div><div class="sl">Gesamt</div></div>
     <div class="sc"><div class="sn">${favs}</div><div class="sl">Favoriten</div></div>
     <div class="sc"><div class="sn">${rd}</div><div class="sl">Gelesen</div></div>
-    <div class="sc"><div class="sn">${tot-rd}</div><div class="sl">Ungelesen</div></div>`;
+    <div class="sc"><div class="sn">${tot-rd}</div><div class="sl">Ungelesen</div></div>
+    ${unk>0?`<div class="sc sc-unk" onclick="retryAllUnknown()" title="Alle nicht gefundenen Bücher erneut suchen" style="cursor:pointer;border-color:rgba(127,90,240,.4);background:rgba(127,90,240,.08)"><div class="sn" style="color:var(--blue)">${unk}</div><div class="sl" style="color:var(--blue)">🔍 Retry</div></div>`:''}`;
   const bd=document.getElementById('fbdg');
   if(favs>0){bd.textContent=favs;bd.style.display='';}else{bd.style.display='none';}
 }
@@ -633,7 +728,7 @@ function getFilt(){
     if(lf.status==='fav'&&!b.fav)return false;
     if(lf.status==='read'&&!b.read)return false;
     if(lf.status==='unread'&&b.read)return false;
-    if(q&&!b.title.toLowerCase().includes(q)&&!b.author.toLowerCase().includes(q)&&!b.raw.toLowerCase().includes(q))return false;
+    if(q){const qn=normalizeStr(q).toLowerCase();const bn=s=>normalizeStr(s).toLowerCase();if(!bn(b.title).includes(qn)&&!bn(b.author).includes(qn)&&!bn(b.raw).includes(qn))return false;}
     return true;
   });
 }
@@ -705,7 +800,11 @@ function litem(b){
 function openMod(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   mid=id;
-  document.getElementById('mcov').innerHTML=b.cover?`<img src="${b.cover}" alt="" onerror="this.innerHTML='📖'" style="width:100%;height:100%;object-fit:cover">`:'📖';
+  const covEl=document.getElementById('mcov');
+  covEl.style.cursor=b.description?'pointer':'default';
+  covEl.title=b.description?'Tippe für Beschreibung':'';
+  covEl.onclick=b.description?()=>toggleDesc():null;
+  covEl.innerHTML=b.cover?`<img src="${b.cover}" alt="" onerror="this.innerHTML='📖'" style="width:100%;height:100%;object-fit:cover">`:'📖';
   document.getElementById('mgen').textContent=b.genre;
   document.getElementById('mttl').textContent=b.title;
   document.getElementById('maut').textContent='von '+b.author;
@@ -713,8 +812,68 @@ function openMod(id){
   document.getElementById('mfol').textContent=b.folder?'📁 Ordner: '+b.folder:'';
   document.getElementById('mraw').textContent='Original: '+b.raw;
   document.getElementById('mnf').textContent=b.found?'':'⚠️ Kein Online-Eintrag gefunden';
+  document.getElementById('mbretry').style.display=b.found?'none':'flex';
+  document.getElementById('mbretry').textContent='🔍 Erneut suchen';
+  document.getElementById('mbretry').disabled=false;
+  const dw=document.getElementById('mdesc-wrap');
+  const dd=document.getElementById('mdesc');
+  dw.style.display='none';
+  if(b.description){dd.textContent=b.description;}else{dd.textContent='';}
   updMBtns(b);
   document.getElementById('modal').classList.add('open');
+}
+
+function toggleDesc(){
+  const b=books.find(x=>x.id===mid);if(!b||!b.description)return;
+  const dw=document.getElementById('mdesc-wrap');
+  dw.style.display=dw.style.display==='none'?'':'none';
+}
+
+async function retrySearch(){
+  const b=books.find(x=>x.id===mid);if(!b)return;
+  const btn=document.getElementById('mbretry');
+  btn.textContent='⏳ Suche läuft…';btn.disabled=true;
+  const result=await fetchBk(b.raw);
+  Object.assign(b,result);
+  await saveAllToDB();
+  if(b.found){
+    toast('✅ Buch gefunden!');
+    openMod(mid);
+    renderLib();renderFav();
+  } else {
+    btn.disabled=false;
+    btn.textContent='🔍 Erneut suchen';
+    toast('❌ Leider nichts gefunden');
+  }
+}
+
+// ===================== RETRY ALL UNKNOWN =====================
+let retryAllRunning=false;
+async function retryAllUnknown(){
+  if(retryAllRunning)return;
+  const toRetry=books.filter(b=>!b.found);
+  if(toRetry.length===0){toast('✅ Keine unbekannten Bücher');return;}
+  retryAllRunning=true;
+  // Show progress
+  document.getElementById('pw').classList.add('show');
+  document.getElementById('pfill').style.width='0%';
+  document.getElementById('plabel').textContent=`🔍 Suche ${toRetry.length} unbekannte Bücher…`;
+  document.getElementById('plast').textContent='';
+  let found=0;
+  for(let i=0;i<toRetry.length;i++){
+    const b=toRetry[i];
+    document.getElementById('plabel').textContent=`🔍 ${i+1}/${toRetry.length}: ${b.raw.slice(0,40)}…`;
+    const result=await fetchBk(b.raw);
+    if(result.found){found++;Object.assign(b,result);}
+    document.getElementById('pfill').style.width=Math.round(((i+1)/toRetry.length)*100)+'%';
+    document.getElementById('plast').textContent=result.found?`✅ Gefunden: ${result.title}`:`❌ Nicht gefunden: ${b.raw}`;
+    if(i<toRetry.length-1)await new Promise(r=>setTimeout(r,350));
+  }
+  document.getElementById('pw').classList.remove('show');
+  retryAllRunning=false;
+  await saveAllToDB();
+  buildSels();buildPills();updStats();renderLib();renderFav();
+  toast(`✅ ${found} von ${toRetry.length} Büchern gefunden`);
 }
 function updMBtns(b){
   const fb=document.getElementById('mbfav');
@@ -762,9 +921,19 @@ function askReset(){
   document.getElementById('conf').classList.add('open');
 }
 
-function closeConf(){document.getElementById('conf').classList.remove('open');}
+function closeConf(){
+  document.getElementById('conf').classList.remove('open');
+  document.getElementById('cextra').style.display='none';
+  document.getElementById('cok').style.background='';
+  document.getElementById('cok').style.color='';
+}
 
 async function confOk(){
+  if(confAction==='addOrReplace'){
+    // "Hinzufügen" button was clicked → append
+    await confOkAddOrReplace(false);
+    return;
+  }
   closeConf();
   if(confAction==='del'){
     books=books.filter(x=>x.id!==mid);
