@@ -303,6 +303,15 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
           <option value="read">✅ Gelesen</option>
           <option value="unread">📖 Ungelesen</option>
         </select>
+        <select class="fsel" id="sortsel" onchange="lf.sort=this.value;renderLib()">
+          <option value="default">📥 Reihenfolge</option>
+          <option value="title_az">🔤 Titel A→Z</option>
+          <option value="title_za">🔤 Titel Z→A</option>
+          <option value="author_az">👤 Autor A→Z</option>
+          <option value="author_za">👤 Autor Z→A</option>
+          <option value="year_asc">📅 Jahr ↑</option>
+          <option value="year_desc">📅 Jahr ↓</option>
+        </select>
       </div>
       <div class="pills" id="gpills"></div>
     </div>
@@ -362,15 +371,16 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
         <div class="mnf" id="mnf"></div>
       </div>
     </div>
-    <div id="mdesc-wrap" style="padding:0 18px 14px;display:none">
-      <div id="mdesc" style="font-size:12px;color:var(--mut);font-family:var(--sans);line-height:1.6;background:var(--surf2);border-radius:9px;padding:12px;border:1px solid var(--brd)"></div>
-    </div>
     <div class="mac">
       <button class="mb mb-fav" id="mbfav" onclick="togFav()"></button>
       <button class="mb mb-read" id="mbread" onclick="togRead()"></button>
+      <button class="mb" id="mbdesc" onclick="toggleDesc()" style="background:rgba(127,90,240,.12);color:var(--blue);border:1px solid rgba(127,90,240,.28);display:none">📖 Beschreibung anzeigen</button>
       <button class="mb" id="mbretry" onclick="retrySearch()" style="background:rgba(127,90,240,.12);color:var(--blue);border:1px solid rgba(127,90,240,.28);display:none">🔍 Erneut suchen</button>
       <button class="mb mb-del" onclick="askDel()">🗑️ Aus Bibliothek löschen</button>
       <button class="mb mb-cls" onclick="closeModal()">Schließen</button>
+    </div>
+    <div id="mdesc-wrap" style="padding:0 18px 18px;display:none">
+      <div id="mdesc" style="font-size:13px;color:var(--mut);font-family:var(--sans);line-height:1.7;background:var(--surf2);border-radius:9px;padding:14px;border:1px solid var(--brd)"></div>
     </div>
   </div>
 </div>
@@ -394,8 +404,8 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
 <script>
 // ===================== STATE =====================
 let books=[], curView='grid', favView='grid', curPage='lib', mid=null, confAction=null;
-let lf={genre:'Alle',folder:'Alle',status:'alle'};
-const GO=['Alle','Fiction','Non-Fiction','Mystery','Romance','Science Fiction','Fantasy','Biography','History','Self-Help','Thriller','Horror','Children','Unbekannt'];
+let lf={genre:'Alle',folder:'Alle',status:'alle',sort:'default'};
+const GO=['Alle','Fiction','Non-Fiction','Mystery','Romance','Science Fiction','Fantasy','Biography','History','Self-Help','Thriller','Horror','Children','Not Found'];
 
 // ===================== INDEXEDDB =====================
 const DB_NAME='ebook-bib', DB_VER=1, STORE='books';
@@ -514,7 +524,6 @@ function parse(raw){
 
 // ===================== SEARCH HELPERS =====================
 function normalizeStr(s){
-  // Normalize umlauts both ways: ä→ae, ö→oe, ü→ue AND ae→ä etc. for flexible matching
   return String(s)
     .replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue')
     .replace(/Ä/g,'Ae').replace(/Ö/g,'Oe').replace(/Ü/g,'Ue')
@@ -522,14 +531,36 @@ function normalizeStr(s){
     .replace(/,/g,' ').replace(/\s+/g,' ').trim();
 }
 
+// ae→ä, oe→ö, ue→ü  (for titles stored with substituted umlauts)
+function denormalizeStr(s){
+  return String(s)
+    .replace(/ae/gi,'ä').replace(/oe/gi,'ö').replace(/ue/gi,'ü')
+    .replace(/ss/gi,'ß')
+    .replace(/,/g,' ').replace(/\s+/g,' ').trim();
+}
+
 function isAbbreviatedName(name){
-  // Detect patterns like "C. B. Clive" or "J.K. Rowling"
   return /^([A-Z]\.\s*)+[A-Z][a-z]+/.test(name.trim());
 }
 
 function extractLastName(name){
   const parts=name.replace(/,/g,'').trim().split(/\s+/);
   return parts[parts.length-1];
+}
+
+// Detect "Lastname Firstname" pattern (2 capitalised words, no comma)
+// e.g. "Coben Harlan", "Kling Marc-Uwe", "Bernemann Dirk"
+function flipNameIfNeeded(name){
+  if(!name) return name;
+  const parts=name.trim().split(/\s+/);
+  if(parts.length===2&&/^[A-ZÄÖÜ]/.test(parts[0])&&/^[A-ZÄÖÜ]/.test(parts[1])){
+    return parts[1]+' '+parts[0]; // "Harlan Coben"
+  }
+  if(parts.length===3&&/^[A-ZÄÖÜ]/.test(parts[0])&&/^[A-ZÄÖÜ]/.test(parts[1])){
+    // "Kling Marc-Uwe" → "Marc-Uwe Kling"
+    return parts.slice(1).join(' ')+' '+parts[0];
+  }
+  return name;
 }
 
 async function olSearch(titleQ, authorQ){
@@ -554,20 +585,31 @@ async function fetchDescription(key){
 // ===================== FETCH BOOK =====================
 async function fetchBk(raw){
   const{t,a}=parse(raw);
-  // Clean: remove commas, normalize umlauts
   const tClean=normalizeStr(t);
   const aClean=a?normalizeStr(a):'';
+  const aFlipped=a?normalizeStr(flipNameIfNeeded(a)):''; // "Coben Harlan"→"Harlan Coben"
+  const tDeNorm=denormalizeStr(t);   // "Haenden"→"Händen"
+  const aDeNorm=a?denormalizeStr(a):'';
 
+  // Build ordered attempt list (deduped)
+  const seen=new Set();
   const attempts=[];
-  // 1. Normal search
-  attempts.push({title:tClean, author:aClean});
-  // 2. If author looks abbreviated (C. B. Clive) → use only last name
+  const add=(title,author)=>{
+    const key=title+'|'+author;
+    if(!seen.has(key)){seen.add(key);attempts.push({title,author});}
+  };
+
+  add(tClean, aClean);                        // 1. as-is normalised
+  if(aFlipped!==aClean) add(tClean, aFlipped); // 2. name flipped
+  add(tDeNorm, aDeNorm);                       // 3. umlauts restored
+  if(aFlipped!==aClean) add(tDeNorm, normalizeStr(flipNameIfNeeded(a))); // 4. both
   if(aClean&&isAbbreviatedName(a)){
-    const lastName=extractLastName(aClean);
-    attempts.push({title:tClean, author:lastName});
+    const ln=extractLastName(aClean);
+    add(tClean, ln);                           // 5. abbreviated → last name only
+    add(tDeNorm, ln);
   }
-  // 3. Title only fallback
-  if(aClean) attempts.push({title:tClean, author:''});
+  add(tClean, '');                             // 6. title only (normalised)
+  add(tDeNorm, '');                            // 7. title only (denormalised)
 
   for(const att of attempts){
     try{
@@ -579,7 +621,7 @@ async function fetchBk(raw){
       }
     }catch(e){}
   }
-  return{title:t,author:a||'Unbekannt',genre:'Unbekannt',cover:null,year:null,description:null,found:false};
+  return{title:t,author:a||'Unbekannt',genre:'Not Found',cover:null,year:null,description:null,found:false};
 }
 
 function detGenre(s){
@@ -596,7 +638,7 @@ function detGenre(s){
   if(l.some(x=>x.includes('children')||x.includes('juvenile')))return'Children';
   if(l.some(x=>x.includes('fiction')&&!x.includes('non-fiction')))return'Fiction';
   if(l.length>0)return'Non-Fiction';
-  return'Unbekannt';
+  return'Not Found';
 }
 
 // ===================== PROCESS FILE =====================
@@ -720,9 +762,22 @@ function updStats(){
 }
 
 // ===================== FILTER =====================
+function applySort(arr){
+  const s=lf.sort||'default';
+  if(s==='default') return arr;
+  const cp=[...arr];
+  const cmp=(a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'});
+  if(s==='title_az') return cp.sort((a,b)=>cmp(a.title,b.title));
+  if(s==='title_za') return cp.sort((a,b)=>cmp(b.title,a.title));
+  if(s==='author_az') return cp.sort((a,b)=>cmp(a.author,b.author));
+  if(s==='author_za') return cp.sort((a,b)=>cmp(b.author,a.author));
+  if(s==='year_asc') return cp.sort((a,b)=>(a.year||9999)-(b.year||9999));
+  if(s==='year_desc') return cp.sort((a,b)=>(b.year||0)-(a.year||0));
+  return arr;
+}
 function getFilt(){
   const q=(document.getElementById('lsearch')?.value||'').toLowerCase();
-  return books.filter(b=>{
+  const filtered=books.filter(b=>{
     if(lf.genre!=='Alle'&&b.genre!==lf.genre)return false;
     if(lf.folder!=='Alle'&&b.folder!==lf.folder)return false;
     if(lf.status==='fav'&&!b.fav)return false;
@@ -731,6 +786,7 @@ function getFilt(){
     if(q){const qn=normalizeStr(q).toLowerCase();const bn=s=>normalizeStr(s).toLowerCase();if(!bn(b.title).includes(qn)&&!bn(b.author).includes(qn)&&!bn(b.raw).includes(qn))return false;}
     return true;
   });
+  return applySort(filtered);
 }
 function getFavFilt(){
   const q=(document.getElementById('fsearch')?.value||'').toLowerCase();
@@ -770,10 +826,11 @@ function renderFav(){
 }
 
 function gcard(b){
+  const nf=b.genre==='Not Found';
   return`<div class="card" onclick="openMod(${b.id})">
     <div class="cw">
       ${b.cover?`<img class="ci" src="${b.cover}" alt="" onerror="this.style.display='none'">`:` <div class="cph">📖</div>`}
-      <div class="gb">${esc(b.genre)}</div>
+      <div class="gb" style="${nf?'background:rgba(229,49,112,.88);':''}">` + esc(b.genre) + `</div>
       <div class="sb2">${b.fav?'<span class="sbi">⭐</span>':''}${b.read?'<span class="sbi">✅</span>':''}</div>
     </div>
     ${b.folder?`<div class="ft">📁 ${esc(b.folder)}</div>`:''}
@@ -801,9 +858,8 @@ function openMod(id){
   const b=books.find(x=>x.id===id);if(!b)return;
   mid=id;
   const covEl=document.getElementById('mcov');
-  covEl.style.cursor=b.description?'pointer':'default';
-  covEl.title=b.description?'Tippe für Beschreibung':'';
-  covEl.onclick=b.description?()=>toggleDesc():null;
+  covEl.style.cursor='default';
+  covEl.onclick=null;
   covEl.innerHTML=b.cover?`<img src="${b.cover}" alt="" onerror="this.innerHTML='📖'" style="width:100%;height:100%;object-fit:cover">`:'📖';
   document.getElementById('mgen').textContent=b.genre;
   document.getElementById('mttl').textContent=b.title;
@@ -815,10 +871,19 @@ function openMod(id){
   document.getElementById('mbretry').style.display=b.found?'none':'flex';
   document.getElementById('mbretry').textContent='🔍 Erneut suchen';
   document.getElementById('mbretry').disabled=false;
+  // Description button
+  const descBtn=document.getElementById('mbdesc');
   const dw=document.getElementById('mdesc-wrap');
   const dd=document.getElementById('mdesc');
   dw.style.display='none';
-  if(b.description){dd.textContent=b.description;}else{dd.textContent='';}
+  descBtn.textContent='📖 Beschreibung anzeigen';
+  if(b.description){
+    dd.textContent=b.description;
+    descBtn.style.display='flex';
+  } else {
+    dd.textContent='';
+    descBtn.style.display='none';
+  }
   updMBtns(b);
   document.getElementById('modal').classList.add('open');
 }
@@ -826,7 +891,10 @@ function openMod(id){
 function toggleDesc(){
   const b=books.find(x=>x.id===mid);if(!b||!b.description)return;
   const dw=document.getElementById('mdesc-wrap');
-  dw.style.display=dw.style.display==='none'?'':'none';
+  const btn=document.getElementById('mbdesc');
+  const open=dw.style.display==='none';
+  dw.style.display=open?'':'none';
+  btn.textContent=open?'📖 Beschreibung ausblenden':'📖 Beschreibung anzeigen';
 }
 
 async function retrySearch(){
