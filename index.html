@@ -247,6 +247,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
         <div class="ph-sub" id="lib-sub">Bereit</div>
       </div>
       <div class="vbtns" id="lib-vbtns" style="display:none">
+        <button class="vb" title="Liste hinzufügen" onclick="document.getElementById('fi-add').click()" style="font-size:16px;padding:0 10px">＋</button>
         <button class="vb on" id="bg" onclick="setView('grid')">▦</button>
         <button class="vb off" id="bl" onclick="setView('list')">☰</button>
       </div>
@@ -279,6 +280,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
       <button class="ubtn" onclick="event.stopPropagation();document.getElementById('fi').click()">Datei auswählen</button>
     </div>
     <input type="file" id="fi" accept=".xlsx,.xls,.csv" onchange="handleFile(event)">
+    <input type="file" id="fi-add" accept=".xlsx,.xls,.csv" onchange="handleAddFile(event)" style="display:none">
 
     <!-- Progress -->
     <div id="pw">
@@ -513,6 +515,11 @@ function dov(e){e.preventDefault();document.getElementById('uz').classList.add('
 function dol(){document.getElementById('uz').classList.remove('drag');}
 function ddr(e){e.preventDefault();dol();const f=e.dataTransfer.files[0];if(f)procFile(f);}
 function handleFile(e){const f=e.target.files[0];if(f)procFile(f);}
+function handleAddFile(e){
+  const f=e.target.files[0];
+  e.target.value=''; // reset so same file can be picked again
+  if(f) doProcessFile(f, true);
+}
 
 // ===================== PARSE =====================
 function parse(raw){
