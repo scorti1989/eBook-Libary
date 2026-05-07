@@ -405,7 +405,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
 // ===================== STATE =====================
 let books=[], curView='grid', favView='grid', curPage='lib', mid=null, confAction=null;
 let lf={genre:'Alle',folder:'Alle',status:'alle',sort:'default'};
-const GO=['Alle','Fiction','Non-Fiction','Mystery','Romance','Science Fiction','Fantasy','Biography','History','Self-Help','Thriller','Horror','Children','Not Found'];
+const GO=['Alle','Fiction','Non-Fiction','Mystery','Romance','Science Fiction','Fantasy','Biography','History','Self-Help','Thriller','Horror','Children','Unbekannt','Not Found'];
 
 // ===================== INDEXEDDB =====================
 const DB_NAME='ebook-bib', DB_VER=1, STORE='books';
@@ -638,7 +638,7 @@ function detGenre(s){
   if(l.some(x=>x.includes('children')||x.includes('juvenile')))return'Children';
   if(l.some(x=>x.includes('fiction')&&!x.includes('non-fiction')))return'Fiction';
   if(l.length>0)return'Non-Fiction';
-  return'Not Found';
+  return'Unbekannt';
 }
 
 // ===================== PROCESS FILE =====================
