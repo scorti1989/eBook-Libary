@@ -523,19 +523,31 @@ function parse(raw){
 }
 
 // ===================== SEARCH HELPERS =====================
+
+// Remove bracketed suffixes like "(T-FLAC)", "(eng)", "(Bd.1)" from title
+function stripBrackets(s){
+  return String(s).replace(/\s*[\(\[【][^\)\]】]*[\)\]】]/g,'').replace(/\s+/g,' ').trim();
+}
+
+// ae→ä, oe→ö, ue→ü, also catches "fur"→"für", "Gluck"→"Glück" etc.
+function denormalizeStr(s){
+  return String(s)
+    .replace(/([Aa])e/g,(_,c)=>c==='A'?'Ä':'ä')
+    .replace(/([Oo])e/g,(_,c)=>c==='O'?'Ö':'ö')
+    .replace(/([Uu])e/g,(_,c)=>c==='U'?'Ü':'ü')
+    // single u before consonant cluster that would be ü: fur, uber, Gluck
+    .replace(/fur/gi,'für').replace(/uber/gi,'über')
+    .replace(/Gluck/g,'Glück').replace(/gluck/g,'glück')
+    .replace(/Muller/g,'Müller').replace(/muller/g,'müller')
+    .replace(/ss/g,'ß')
+    .replace(/,/g,' ').replace(/\s+/g,' ').trim();
+}
+
 function normalizeStr(s){
   return String(s)
     .replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue')
     .replace(/Ä/g,'Ae').replace(/Ö/g,'Oe').replace(/Ü/g,'Ue')
     .replace(/ß/g,'ss')
-    .replace(/,/g,' ').replace(/\s+/g,' ').trim();
-}
-
-// ae→ä, oe→ö, ue→ü  (for titles stored with substituted umlauts)
-function denormalizeStr(s){
-  return String(s)
-    .replace(/ae/gi,'ä').replace(/oe/gi,'ö').replace(/ue/gi,'ü')
-    .replace(/ss/gi,'ß')
     .replace(/,/g,' ').replace(/\s+/g,' ').trim();
 }
 
@@ -548,17 +560,17 @@ function extractLastName(name){
   return parts[parts.length-1];
 }
 
-// Detect "Lastname Firstname" pattern (2 capitalised words, no comma)
-// e.g. "Coben Harlan", "Kling Marc-Uwe", "Bernemann Dirk"
+// "Lastname Firstname [Middle]" → "Firstname [Middle] Lastname"
+// Works for 2-word ("Coben Harlan"), 3-word ("Akers Alan Burt", "Kling Marc-Uwe")
+// and 4-word names. Heuristic: if first word is ALL-CAPS start and rest too → flip.
 function flipNameIfNeeded(name){
   if(!name) return name;
   const parts=name.trim().split(/\s+/);
-  if(parts.length===2&&/^[A-ZÄÖÜ]/.test(parts[0])&&/^[A-ZÄÖÜ]/.test(parts[1])){
-    return parts[1]+' '+parts[0]; // "Harlan Coben"
-  }
-  if(parts.length===3&&/^[A-ZÄÖÜ]/.test(parts[0])&&/^[A-ZÄÖÜ]/.test(parts[1])){
-    // "Kling Marc-Uwe" → "Marc-Uwe Kling"
-    return parts.slice(1).join(' ')+' '+parts[0];
+  if(parts.length<2) return name;
+  // All parts start with uppercase → likely "Lastname Firstname..." pattern
+  if(parts.every(p=>/^[A-ZÄÖÜ]/.test(p))){
+    // Move first part (surname) to end
+    return [...parts.slice(1), parts[0]].join(' ');
   }
   return name;
 }
@@ -568,6 +580,13 @@ async function olSearch(titleQ, authorQ){
     ?`title:${encodeURIComponent(titleQ)}+author:${encodeURIComponent(authorQ)}`
     :`title:${encodeURIComponent(titleQ)}`;
   const r=await fetch(`https://openlibrary.org/search.json?q=${q}&limit=1&fields=title,author_name,subject,cover_i,first_publish_year,key`);
+  return r.json();
+}
+
+// Google Books fallback – better coverage for German titles
+async function gbSearch(titleQ, authorQ){
+  let q=authorQ?`intitle:${encodeURIComponent(titleQ)}+inauthor:${encodeURIComponent(authorQ)}`:encodeURIComponent(titleQ);
+  const r=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&langRestrict=de`);
   return r.json();
 }
 
@@ -582,36 +601,60 @@ async function fetchDescription(key){
   return null;
 }
 
+function mapGbResult(item, fallbackTitle, fallbackAuthor){
+  const vi=item.volumeInfo||{};
+  const cover=vi.imageLinks?.thumbnail?.replace('http:','https:')||null;
+  const cats=vi.categories||[];
+  return{
+    title:vi.title||fallbackTitle,
+    author:(vi.authors&&vi.authors[0])||fallbackAuthor||'Unbekannt',
+    genre:detGenre(cats),
+    cover,
+    year:vi.publishedDate?parseInt(vi.publishedDate):null,
+    description:vi.description?vi.description.slice(0,600)+(vi.description.length>600?'…':''):null,
+    found:true
+  };
+}
+
 // ===================== FETCH BOOK =====================
 async function fetchBk(raw){
   const{t,a}=parse(raw);
-  const tClean=normalizeStr(t);
-  const aClean=a?normalizeStr(a):'';
-  const aFlipped=a?normalizeStr(flipNameIfNeeded(a)):''; // "Coben Harlan"→"Harlan Coben"
-  const tDeNorm=denormalizeStr(t);   // "Haenden"→"Händen"
-  const aDeNorm=a?denormalizeStr(a):'';
 
-  // Build ordered attempt list (deduped)
+  // Pre-process title: strip brackets, then build variants
+  const tStripped=stripBrackets(t);            // "Auf duennem Eis (T-FLAC)" → "Auf duennem Eis"
+  const tDeNorm=denormalizeStr(tStripped);     // "Auf dünnem Eis"
+  const tClean=normalizeStr(tStripped);        // ae/oe/ue normalised
+
+  const aFlipped=a?flipNameIfNeeded(a):'';     // "Akers Alan Burt" → "Alan Burt Akers"
+  const aDeNorm=a?denormalizeStr(a):'';
+  const aFlipDeNorm=aFlipped?denormalizeStr(aFlipped):'';
+
   const seen=new Set();
-  const attempts=[];
-  const add=(title,author)=>{
+  const olAttempts=[];
+  const addOL=(title,author)=>{
     const key=title+'|'+author;
-    if(!seen.has(key)){seen.add(key);attempts.push({title,author});}
+    if(!seen.has(key)){seen.add(key);olAttempts.push({title,author});}
   };
 
-  add(tClean, aClean);                        // 1. as-is normalised
-  if(aFlipped!==aClean) add(tClean, aFlipped); // 2. name flipped
-  add(tDeNorm, aDeNorm);                       // 3. umlauts restored
-  if(aFlipped!==aClean) add(tDeNorm, normalizeStr(flipNameIfNeeded(a))); // 4. both
-  if(aClean&&isAbbreviatedName(a)){
-    const ln=extractLastName(aClean);
-    add(tClean, ln);                           // 5. abbreviated → last name only
-    add(tDeNorm, ln);
+  // Open Library attempts (ordered by likelihood)
+  addOL(tDeNorm, aFlipDeNorm);           // 1. best guess: umlauts + flipped name
+  addOL(tDeNorm, aDeNorm);               // 2. umlauts + original name order
+  addOL(tClean,  normalizeStr(aFlipped));// 3. normalised + flipped
+  addOL(tClean,  normalizeStr(a));       // 4. normalised + original
+  if(a&&isAbbreviatedName(a)){
+    const ln=extractLastName(a);
+    addOL(tDeNorm, ln);
+    addOL(tClean,  ln);
   }
-  add(tClean, '');                             // 6. title only (normalised)
-  add(tDeNorm, '');                            // 7. title only (denormalised)
+  addOL(tDeNorm, '');                    // 5. title only (umlauts)
+  addOL(tClean,  '');                    // 6. title only (normalised)
+  // Also try with original (un-stripped) title in case brackets helped
+  if(tStripped!==t){
+    addOL(normalizeStr(t), normalizeStr(aFlipped));
+    addOL(normalizeStr(t), '');
+  }
 
-  for(const att of attempts){
+  for(const att of olAttempts){
     try{
       const d=await olSearch(att.title, att.author);
       if(d.docs&&d.docs.length>0){
@@ -621,6 +664,24 @@ async function fetchBk(raw){
       }
     }catch(e){}
   }
+
+  // ── Google Books fallback ──────────────────────────────────────────────────
+  const gbTries=[
+    [tDeNorm, aFlipDeNorm],
+    [tDeNorm, aDeNorm],
+    [tDeNorm, ''],
+    [tClean,  normalizeStr(aFlipped)],
+    [tClean,  ''],
+  ];
+  for(const[tq,aq] of gbTries){
+    try{
+      const d=await gbSearch(tq,aq);
+      if(d.items&&d.items.length>0){
+        return mapGbResult(d.items[0], t, a);
+      }
+    }catch(e){}
+  }
+
   return{title:t,author:a||'Unbekannt',genre:'Not Found',cover:null,year:null,description:null,found:false};
 }
 
