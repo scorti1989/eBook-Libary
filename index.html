@@ -151,10 +151,12 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
 .fei{font-size:50px;margin-bottom:14px}
 .fet{font-size:17px;color:var(--mut);font-family:var(--sans)}
 .fes{font-size:13px;color:var(--dim);font-family:var(--sans);margin-top:7px;line-height:1.5}
-.pagination{display:flex;align-items:center;justify-content:center;gap:10px;padding:16px 0 4px;font-family:var(--sans)}
-.pag-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--brd);background:var(--surf);color:var(--txt);cursor:pointer;font-family:var(--sans);font-size:12px}
+.pagination{display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 0 10px;font-family:var(--sans)}
+.pag-btn{padding:6px 12px;min-width:42px;border-radius:8px;border:1px solid var(--brd);background:var(--surf2);color:var(--txt);cursor:pointer;font-family:var(--sans);font-size:12px;line-height:1.2}
 .pag-btn:disabled{opacity:.3;cursor:default}
-.pag-info{color:var(--dim);font-size:12px}
+.pag-info{color:var(--dim);font-size:11px;white-space:nowrap}
+#lpagination{padding-bottom:max(96px,calc(env(safe-area-inset-bottom) + 88px))}
+#lpagination-top .pagination{padding-top:4px;padding-bottom:8px}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:200;display:none;align-items:flex-end;justify-content:center}
 #modal.open{display:flex}
 #mi{background:var(--surf);border-radius:20px 20px 0 0;width:100%;max-width:500px;animation:sup .26s ease;max-height:92dvh;overflow-y:auto;padding-bottom:max(22px,env(safe-area-inset-bottom))}
@@ -778,14 +780,15 @@ function renderLib(){
   renderPagination('lpagination',curPageNum,totalPages,all.length);
 }
 function renderPagination(elId,pageNum,totalPages,total){
-  const el=document.getElementById(elId);if(!el)return;
+  const el=document.getElementById(elId);
+  if(!el)return;
   if(totalPages<=1){el.innerHTML='';return;}
   el.innerHTML='';
   const wrap=document.createElement('div');wrap.className='pagination';
-  const prev=document.createElement('button');prev.className='pag-btn';prev.textContent='← Zurück';prev.disabled=pageNum<=1;
+  const prev=document.createElement('button');prev.className='pag-btn';prev.textContent='‹';prev.disabled=pageNum<=1;
   prev.addEventListener('click',()=>changePage(pageNum-1));
-  const info=document.createElement('span');info.className='pag-info';info.textContent='Seite '+pageNum+' / '+totalPages+' · '+total+' Bücher';
-  const next=document.createElement('button');next.className='pag-btn';next.textContent='Weiter →';next.disabled=pageNum>=totalPages;
+  const info=document.createElement('span');info.className='pag-info';info.textContent=pageNum+' / '+totalPages;
+  const next=document.createElement('button');next.className='pag-btn';next.textContent='›';next.disabled=pageNum>=totalPages;
   next.addEventListener('click',()=>changePage(pageNum+1));
   wrap.appendChild(prev);wrap.appendChild(info);wrap.appendChild(next);el.appendChild(wrap);
 }
@@ -793,7 +796,7 @@ function changePage(n){
   curPageNum=n;
   renderLib();
   setTimeout(()=>{
-    document.getElementById('page-lib').scrollIntoView({behavior:'smooth',block:'start'});
+    document.getElementById('lpagination-top').scrollIntoView({behavior:'smooth',block:'start'});
   },50);
 }
 
