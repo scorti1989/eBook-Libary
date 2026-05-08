@@ -284,6 +284,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
       </div>
       <div class="pills" id="gpills"></div>
     </div>
+    <div id="lpagination-top"></div>
     <div id="lgrid" style="display:none"></div>
     <div id="llist" style="display:none"></div>
     <div id="lpagination"></div>
@@ -371,7 +372,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--serif);min-height:1
 let books=[], curView='grid', favView='grid', curPage='lib', mid=null;
 let lf={genre:'Alle',folder:'Alle',status:'alle',sort:'default'};
 let curPageNum=1, cancelRequested=false, metaRunning=false, pendingFile=null;
-const PAGE_SIZE=100;
+const PAGE_SIZE=200;
 const GO=['Alle','Fiction','Non-Fiction','Mystery','Romance','Science Fiction','Fantasy','Biography','History','Self-Help','Thriller','Horror','Children','Unbekannt','Not Found'];
 
 // ══════════════════════════════════════════
@@ -773,9 +774,9 @@ function renderLib(){
     l.style.display='';g.style.display='none';l.className='blist';
     l.innerHTML=bks.length?bks.map(b=>litem(b)).join(''):'<div class="empty">Keine Bücher gefunden.</div>';
   }
-  const pag=document.getElementById('lpagination');
-  if(totalPages<=1){pag.innerHTML='';return;}
-  pag.innerHTML=`<div class="pagination"><button class="pag-btn" onclick="changePage(${curPageNum-1})" ${curPageNum<=1?'disabled':''}>← Zurück</button><span class="pag-info">Seite ${curPageNum} / ${totalPages}</span><button class="pag-btn" onclick="changePage(${curPageNum+1})" ${curPageNum>=totalPages?'disabled':''}>Weiter →</button></div>`;
+  const pagHtml=totalPages<=1?'':`<div class="pagination"><button class="pag-btn" onclick="changePage(${curPageNum-1})" ${curPageNum<=1?'disabled':''}>← Zurück</button><span class="pag-info">Seite ${curPageNum} / ${totalPages} · ${all.length} Bücher</span><button class="pag-btn" onclick="changePage(${curPageNum+1})" ${curPageNum>=totalPages?'disabled':''}>Weiter →</button></div>`;
+  document.getElementById('lpagination').innerHTML=pagHtml;
+  document.getElementById('lpagination-top').innerHTML=curPageNum>1?pagHtml:'';
 }
 function changePage(n){curPageNum=n;renderLib();document.getElementById('lctrl').scrollIntoView({behavior:'smooth',block:'start'});}
 
@@ -859,7 +860,7 @@ function askReset(){
     document.getElementById('uz').style.display='';document.getElementById('lctrl').style.display='none';
     document.getElementById('lgrid').style.display='none';document.getElementById('llist').style.display='none';
     document.getElementById('lib-vbtns').style.display='none';document.getElementById('bnav').classList.remove('show');
-    document.getElementById('lib-sub').textContent='Bereit';document.getElementById('lpagination').innerHTML='';
+    document.getElementById('lib-sub').textContent='Bereit';document.getElementById('lpagination').innerHTML='';document.getElementById('lpagination-top').innerHTML='';
     goPage('lib');toast('🗑️ Bibliothek geleert');
   });
 }
