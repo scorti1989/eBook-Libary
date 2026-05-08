@@ -774,12 +774,12 @@ function renderLib(){
     l.style.display='';g.style.display='none';l.className='blist';
     l.innerHTML=bks.length?bks.map(b=>litem(b)).join(''):'<div class="empty">Keine Bücher gefunden.</div>';
   }
+  renderPagination('lpagination-top',curPageNum,totalPages,all.length);
   renderPagination('lpagination',curPageNum,totalPages,all.length);
-  renderPagination('lpagination-top',curPageNum>1?curPageNum:0,totalPages,all.length);
 }
 function renderPagination(elId,pageNum,totalPages,total){
   const el=document.getElementById(elId);if(!el)return;
-  if(!pageNum||totalPages<=1){el.innerHTML='';return;}
+  if(totalPages<=1){el.innerHTML='';return;}
   el.innerHTML='';
   const wrap=document.createElement('div');wrap.className='pagination';
   const prev=document.createElement('button');prev.className='pag-btn';prev.textContent='← Zurück';prev.disabled=pageNum<=1;
@@ -789,7 +789,13 @@ function renderPagination(elId,pageNum,totalPages,total){
   next.addEventListener('click',()=>changePage(pageNum+1));
   wrap.appendChild(prev);wrap.appendChild(info);wrap.appendChild(next);el.appendChild(wrap);
 }
-function changePage(n){curPageNum=n;renderLib();try{document.getElementById('lctrl').scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}}
+function changePage(n){
+  curPageNum=n;
+  renderLib();
+  setTimeout(()=>{
+    document.getElementById('page-lib').scrollIntoView({behavior:'smooth',block:'start'});
+  },50);
+}
 
 function renderFav(){
   const bks=getFavFilt();
