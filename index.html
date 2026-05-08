@@ -774,11 +774,22 @@ function renderLib(){
     l.style.display='';g.style.display='none';l.className='blist';
     l.innerHTML=bks.length?bks.map(b=>litem(b)).join(''):'<div class="empty">Keine Bücher gefunden.</div>';
   }
-  const pagHtml=totalPages<=1?'':`<div class="pagination"><button class="pag-btn" onclick="changePage(${curPageNum-1})" ${curPageNum<=1?'disabled':''}>← Zurück</button><span class="pag-info">Seite ${curPageNum} / ${totalPages} · ${all.length} Bücher</span><button class="pag-btn" onclick="changePage(${curPageNum+1})" ${curPageNum>=totalPages?'disabled':''}>Weiter →</button></div>`;
-  document.getElementById('lpagination').innerHTML=pagHtml;
-  document.getElementById('lpagination-top').innerHTML=curPageNum>1?pagHtml:'';
+  renderPagination('lpagination',curPageNum,totalPages,all.length);
+  renderPagination('lpagination-top',curPageNum>1?curPageNum:0,totalPages,all.length);
 }
-function changePage(n){curPageNum=n;renderLib();document.getElementById('lctrl').scrollIntoView({behavior:'smooth',block:'start'});}
+function renderPagination(elId,pageNum,totalPages,total){
+  const el=document.getElementById(elId);if(!el)return;
+  if(!pageNum||totalPages<=1){el.innerHTML='';return;}
+  el.innerHTML='';
+  const wrap=document.createElement('div');wrap.className='pagination';
+  const prev=document.createElement('button');prev.className='pag-btn';prev.textContent='← Zurück';prev.disabled=pageNum<=1;
+  prev.addEventListener('click',()=>changePage(pageNum-1));
+  const info=document.createElement('span');info.className='pag-info';info.textContent='Seite '+pageNum+' / '+totalPages+' · '+total+' Bücher';
+  const next=document.createElement('button');next.className='pag-btn';next.textContent='Weiter →';next.disabled=pageNum>=totalPages;
+  next.addEventListener('click',()=>changePage(pageNum+1));
+  wrap.appendChild(prev);wrap.appendChild(info);wrap.appendChild(next);el.appendChild(wrap);
+}
+function changePage(n){curPageNum=n;renderLib();try{document.getElementById('lctrl').scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}}
 
 function renderFav(){
   const bks=getFavFilt();
