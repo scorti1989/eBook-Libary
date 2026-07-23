@@ -394,6 +394,31 @@ body{
 .mb-del{background:rgba(122,32,48,.1);color:#c06070;border-color:rgba(122,32,48,.25)}
 .mb-cls{background:var(--surf3);color:var(--mut);border-color:var(--brd2)}
 
+/* CLOUD SYNC */
+#sync-modal{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:300;display:none;align-items:center;justify-content:center;padding:22px}
+#sync-modal.show{display:flex}
+#sync-box{
+  background:linear-gradient(160deg,#1e1409,#150e07);
+  border:1px solid var(--brd2);border-radius:14px;
+  padding:24px 20px;max-width:360px;width:100%;
+  box-shadow:0 8px 40px rgba(0,0,0,.6);
+}
+.sync-t{font-size:17px;margin-bottom:6px;color:var(--txt2);text-align:center}
+.sync-sub{font-size:11px;color:var(--mut);font-family:var(--sans);margin-bottom:18px;line-height:1.6;text-align:center}
+.sync-lbl{font-size:10px;color:var(--mut);font-family:var(--sans);letter-spacing:.5px;margin-bottom:4px;text-transform:uppercase}
+.sync-inp{width:100%;padding:10px 12px;border-radius:7px;border:1px solid var(--brd2);
+  background:var(--surf3);color:var(--txt2);font-family:var(--sans);font-size:12px;margin-bottom:12px;outline:none}
+.sync-inp:focus{border-color:var(--acc)}
+.sync-status{font-size:11px;font-family:var(--sans);color:var(--mut);line-height:1.5;
+  padding:9px 11px;border-radius:7px;background:var(--surf3);border:1px solid var(--brd2);margin-bottom:14px}
+.sync-status.err{color:#c06070;background:rgba(122,32,48,.1);border-color:rgba(122,32,48,.25)}
+.sync-btns{display:flex;gap:8px;flex-wrap:wrap}
+.sync-btn{flex:1;padding:11px;border-radius:7px;border:1px solid var(--brd2);
+  font-family:var(--sans);font-weight:600;font-size:12px;cursor:pointer;min-width:80px;
+  background:var(--surf3);color:var(--mut)}
+.sync-btn.prim{background:var(--acc);color:#150e07;border-color:var(--acc)}
+.sync-btn:disabled{opacity:.5;cursor:default}
+
 /* CONFIRM */
 #conf{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:300;display:none;align-items:center;justify-content:center;padding:22px}
 #conf.open{display:flex}
@@ -483,6 +508,16 @@ body{
       <button class="ubtn-sec" onclick="document.getElementById('fi-import').click()">📥 Backup auswählen (.json)</button>
     </div>
 
+    <!-- ═══ CLOUD-SYNC auf dem Startscreen ═══ -->
+    <div class="uz-divider">oder</div>
+    <div class="uz-backup" id="uz-cloud">
+      <div class="uz-backup-text">
+        <strong>☁️ Aus der Cloud laden</strong>
+        <span id="uz-cloud-sub">Server-Adresse und Passwort eintragen – deine Bibliothek wird dann automatisch abgeglichen.</span>
+      </div>
+      <button class="ubtn-sec" id="uz-cloud-btn" onclick="syncOpen()">☁️ Cloud einrichten</button>
+    </div>
+
     <div id="pw">
       <div class="pl" id="plabel">⏳ Verarbeite…</div>
       <div class="pt"><div class="pf" id="pfill"></div></div>
@@ -496,6 +531,7 @@ body{
         <button class="abtn primary" id="btn-meta" onclick="startMetaLoad()" style="display:none">🔍 Infos nachladen</button>
         <button class="abtn success" onclick="exportLib()">📤 Export</button>
         <button class="abtn" onclick="document.getElementById('fi-import').click()">📥 Import</button>
+        <button class="abtn" onclick="syncOpen()">☁️ Sync</button>
         <button class="abtn danger" onclick="askReset()">↺ Neu</button>
       </div>
       <div class="sbar">
@@ -591,6 +627,22 @@ body{
 </div>
 
 <!-- CONFIRM -->
+<div id="sync-modal" onclick="syncClose()">
+  <div id="sync-box" onclick="event.stopPropagation()">
+    <div class="sync-t">☁️ Cloud-Sync</div>
+    <div class="sync-sub">Gleicht deine Bibliothek mit deinem eigenen Server ab.<br>Ohne Eintrag bleibt die App rein lokal.</div>
+    <div class="sync-lbl">Server-Adresse</div>
+    <input class="sync-inp" type="url" id="sync-url" placeholder="https://app-sync....workers.dev" autocomplete="off">
+    <div class="sync-lbl">Sync-Passwort</div>
+    <input class="sync-inp" type="password" id="sync-token" placeholder="Passwort aus dem Worker" autocomplete="new-password">
+    <div class="sync-status" id="sync-status">Noch kein Abgleich durchgeführt</div>
+    <div class="sync-btns">
+      <button class="sync-btn" onclick="syncClose()">Schließen</button>
+      <button class="sync-btn" onclick="syncSaveCfg()">Speichern</button>
+      <button class="sync-btn prim" id="sync-run-btn" onclick="syncRunNow()">☁️ Jetzt abgleichen</button>
+    </div>
+  </div>
+</div>
 <div id="conf" onclick="closeConf()">
   <div id="cb" onclick="event.stopPropagation()">
     <div class="ct" id="ct"></div>
@@ -634,7 +686,8 @@ async function saveAllToDB(){
     const st=tx.objectStore(STORE);
     st.clear();
     for(const b of books)st.put(b);
-    tx.oncomplete=res;tx.onerror=()=>rej(tx.error);
+    tx.oncomplete=()=>{try{if(typeof libSync!=='undefined'&&!libSync.__applying)libSync.markDirty();}catch(_){}res();};
+    tx.onerror=()=>rej(tx.error);
   });
 }
 async function saveOneToDB(b){
@@ -642,7 +695,8 @@ async function saveOneToDB(b){
   return new Promise((res,rej)=>{
     const tx=db.transaction(STORE,'readwrite');
     tx.objectStore(STORE).put(b);
-    tx.oncomplete=res;tx.onerror=()=>rej(tx.error);
+    tx.oncomplete=()=>{try{if(typeof libSync!=='undefined'&&!libSync.__applying)libSync.markDirty();}catch(_){}res();};
+    tx.onerror=()=>rej(tx.error);
   });
 }
 async function loadAllFromDB(){
@@ -702,12 +756,351 @@ async function loadSaved(){
 }
 function clearSavedAndUpload(){clearDB();document.getElementById('saved-banner').classList.remove('show');document.getElementById('uz').style.display='';}
 
+
+// ══════════════════════════════════════════
+// CLOUD SYNC (Cloudflare Worker)
+// ══════════════════════════════════════════
+const SYNC_CFG_KEY   = 'lib_sync';        // {url, token}
+const SYNC_META_KEY  = 'lib_sync_meta';   // {lastSync, lastServerAt}
+const SYNC_DIRTY_KEY = 'lib_sync_dirty';  // '1' when local changes pending
+const SYNC_APP_NAME  = 'books';
+// Keys the sync owns itself – never trigger dirty-marking (endless-loop guard)
+const SYNC_OWN_KEYS  = [SYNC_CFG_KEY, SYNC_META_KEY, SYNC_DIRTY_KEY];
+
+const libSync = (()=>{
+  let running=false, pushTimer=null, listeners=[];
+
+  const notify=(msg,isErr)=>{listeners.forEach(fn=>{try{fn(msg,!!isErr);}catch(_){}});};
+
+  const getCfg=()=>{try{return JSON.parse(localStorage.getItem(SYNC_CFG_KEY)||'null');}catch{return null;}};
+  const setCfg=c=>{try{localStorage.setItem(SYNC_CFG_KEY,JSON.stringify(c));}catch(_){}};
+  const getMeta=()=>{try{return JSON.parse(localStorage.getItem(SYNC_META_KEY)||'{}');}catch{return{};}};
+  const setMeta=m=>{try{localStorage.setItem(SYNC_META_KEY,JSON.stringify(m));}catch(_){}};
+  const isDirty=()=>{try{return localStorage.getItem(SYNC_DIRTY_KEY)==='1';}catch{return false;}};
+  const setDirty=v=>{try{v?localStorage.setItem(SYNC_DIRTY_KEY,'1'):localStorage.removeItem(SYNC_DIRTY_KEY);}catch(_){}};
+  const isConfigured=()=>{const c=getCfg();return !!(c&&c.url&&c.token);};
+
+  // Collect all app data – same shape as the JSON export, read from IndexedDB
+  const collect=async()=>{
+    let list=[];
+    try{ list = await loadAllFromDB(); }catch(_){ list = books||[]; }
+    if((!list||!list.length)&&books&&books.length) list=books;
+    let meta=null;
+    try{ meta = JSON.parse(localStorage.getItem('ebib-meta')||'null'); }catch(_){}
+    return { version:2, exported:new Date().toISOString(), count:(list||[]).length, books:list||[], ebibMeta:meta };
+  };
+
+  // Apply a server payload: write into IndexedDB + refresh the UI
+  const apply=async data=>{
+    if(!data||!Array.isArray(data.books))return false;
+    books = data.books;
+    api.__applying = true;                                  // suppress dirty-marking
+    try{ await saveAllToDB(); }catch(e){ console.warn('Sync: DB write failed',e); }
+    finally{ api.__applying = false; }
+    if(data.ebibMeta){ try{ localStorage.setItem('ebib-meta',JSON.stringify(data.ebibMeta)); }catch(_){} }
+    setDirty(false);
+    // Refresh visible UI without a reload
+    try{
+      const banner=document.getElementById('saved-banner');
+      if(banner)banner.classList.remove('show');
+      const uz=document.getElementById('uz');
+      if(uz)uz.style.display='none';
+      if(typeof showLib==='function')showLib();
+      else{ if(typeof buildSels==='function')buildSels();
+            if(typeof buildPills==='function')buildPills();
+            if(typeof updStats==='function')updStats();
+            if(typeof renderLib==='function')renderLib();
+            if(typeof renderFav==='function')renderFav(); }
+    }catch(e){ console.warn('Sync: UI refresh failed',e); }
+    return true;
+  };
+
+  const pull=async snap=>{
+    const cfg=getCfg(); if(!cfg)throw new Error('Sync nicht konfiguriert');
+    const base=cfg.url.replace(/\/+$/,'');
+    const url=base+'/load?app='+SYNC_APP_NAME+(snap?'&snap='+encodeURIComponent(snap):'');
+    const res=await fetch(url,{headers:{'X-Sync-Token':cfg.token}});
+    if(res.status===401)throw new Error('Falsches Sync-Passwort');
+    if(!res.ok)throw new Error('Server-Fehler '+res.status);
+    return await res.json();
+  };
+
+  const push=async()=>{
+    const cfg=getCfg(); if(!cfg)throw new Error('Sync nicht konfiguriert');
+    const base=cfg.url.replace(/\/+$/,'');
+    const payload=await collect();
+    const res=await fetch(base+'/save?app='+SYNC_APP_NAME,{
+      method:'POST',
+      headers:{'X-Sync-Token':cfg.token,'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if(res.status===401)throw new Error('Falsches Sync-Passwort');
+    if(!res.ok)throw new Error('Server-Fehler '+res.status);
+    const j=await res.json();
+    const m=getMeta();
+    m.lastSync=new Date().toISOString();
+    m.lastServerAt=j.savedAt||m.lastSync;
+    setMeta(m); setDirty(false);
+    return j;
+  };
+
+  const listSnapshots=async()=>{
+    const cfg=getCfg(); if(!cfg)return[];
+    const base=cfg.url.replace(/\/+$/,'');
+    const res=await fetch(base+'/snapshots?app='+SYNC_APP_NAME,{headers:{'X-Sync-Token':cfg.token}});
+    if(!res.ok)return[];
+    const j=await res.json();
+    return Array.isArray(j)?j:(j.snapshots||[]);
+  };
+
+  // Main reconcile routine
+  const run=async(opts)=>{
+    opts=opts||{};
+    if(running||!isConfigured())return{skipped:true};
+    running=true;
+    try{
+      if(!opts.silent)notify('Abgleich läuft…',false);
+      const server=await pull();
+      const meta=getMeta();
+      const dirty=isDirty();
+
+      // 1. Server empty → upload if we have anything locally
+      if(server&&server.empty){
+        const local=await collect();
+        if(local.books&&local.books.length){
+          await push();
+          notify('Erster Upload abgeschlossen',false);
+          return{uploaded:true};
+        }
+        notify('Nichts zu synchronisieren',false);
+        return{upToDate:true};
+      }
+
+      const serverAt=server&&server._savedAt?server._savedAt:null;
+      const serverIsNew=serverAt&&(!meta.lastServerAt||new Date(serverAt)>new Date(meta.lastServerAt));
+
+      // 2. Conflict → ask the user
+      if(serverIsNew&&dirty){
+        const useServer=window.confirm(
+          'Konflikt beim Abgleich\n\n'+
+          'Auf dem Server liegen neuere Daten, gleichzeitig hast du lokale Änderungen.\n\n'+
+          'OK = Server-Stand übernehmen (lokale Änderungen gehen verloren)\n'+
+          'Abbrechen = Eigene Daten hochladen (Server wird überschrieben)'
+        );
+        if(useServer){
+          await apply(server);
+          const m=getMeta();m.lastSync=new Date().toISOString();m.lastServerAt=serverAt;setMeta(m);
+          notify('Server-Stand übernommen',false);
+          return{downloaded:true};
+        }
+        await push();
+        notify('Eigene Daten hochgeladen',false);
+        return{uploaded:true};
+      }
+
+      // 3. Server newer → download
+      if(serverIsNew){
+        await apply(server);
+        const m=getMeta();m.lastSync=new Date().toISOString();m.lastServerAt=serverAt;setMeta(m);
+        notify('Daten vom Server geladen',false);
+        return{downloaded:true};
+      }
+
+      // 4. Local changes → upload
+      if(dirty){
+        await push();
+        notify('Änderungen hochgeladen',false);
+        return{uploaded:true};
+      }
+
+      // 5. Nothing to do
+      const m=getMeta();m.lastSync=new Date().toISOString();setMeta(m);
+      if(!opts.silent)notify('Alles aktuell',false);
+      return{upToDate:true};
+
+    }catch(e){
+      notify((e&&e.message)||'Sync fehlgeschlagen',true);
+      return{error:(e&&e.message)||'Sync fehlgeschlagen'};
+    }finally{ running=false; }
+  };
+
+  // Debounced background upload after local changes
+  const schedulePush=()=>{
+    if(!isConfigured())return;
+    if(pushTimer)clearTimeout(pushTimer);
+    pushTimer=setTimeout(()=>{
+      push().catch(e=>notify((e&&e.message)||'Upload fehlgeschlagen',true));
+    },4000);
+  };
+
+  // Mark local data as changed (called from DB writes + localStorage watcher)
+  const markDirty=()=>{ setDirty(true); schedulePush(); };
+
+  // Watch localStorage for app-key changes (ebib-meta)
+  const installWatcher=()=>{
+    try{
+      if(localStorage.__libSyncPatched)return;
+      const orig=localStorage.setItem.bind(localStorage);
+      localStorage.setItem=function(key,value){
+        orig(key,value);
+        try{
+          if(SYNC_OWN_KEYS.indexOf(key)!==-1)return;  // loop guard
+          if(key==='ebib-meta')markDirty();
+        }catch(_){}
+      };
+      localStorage.__libSyncPatched=true;
+    }catch(e){console.warn('Sync watcher install failed',e);}
+  };
+
+  const api={getCfg,setCfg,getMeta,isConfigured,isDirty,markDirty,
+         collect,apply,push,pull,run,listSnapshots,installWatcher,schedulePush,
+         __applying:false,
+         onStatus:fn=>{listeners.push(fn);return()=>{listeners=listeners.filter(f=>f!==fn);};}};
+  return api;
+})();
+
+// ── Sync UI wiring ────────────────────────────────────────
+function syncOpen(){
+  try{
+    const cfg=libSync.getCfg()||{};
+    document.getElementById('sync-url').value=cfg.url||'https://app-sync.scorti1989.workers.dev';
+    document.getElementById('sync-token').value=cfg.token||'';
+    syncRefreshStatus();
+    document.getElementById('sync-modal').classList.add('show');
+  }catch(e){console.warn('syncOpen failed',e);}
+}
+function syncClose(){
+  const m=document.getElementById('sync-modal');
+  if(m)m.classList.remove('show');
+}
+function syncRefreshStatus(msg,isErr){
+  try{
+    const el=document.getElementById('sync-status');
+    if(!el)return;
+    const meta=libSync.getMeta();
+    let text=msg;
+    if(!text){
+      text=meta&&meta.lastSync
+        ? 'Zuletzt abgeglichen: '+new Date(meta.lastSync).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+        : 'Noch kein Abgleich durchgeführt';
+    }
+    if(libSync.isDirty()&&!isErr)text+=' · Lokale Änderungen offen';
+    el.textContent=text;
+    el.className='sync-status'+(isErr?' err':'');
+  }catch(_){}
+}
+function syncSaveCfg(){
+  const url=document.getElementById('sync-url').value.trim();
+  const token=document.getElementById('sync-token').value.trim();
+  libSync.setCfg({url,token});
+  syncRefreshStatus('Konfiguration gespeichert',false);
+  syncUpdateStartBlock();
+  toast('✅ Sync-Konfiguration gespeichert');
+}
+async function syncRunNow(){
+  const url=document.getElementById('sync-url').value.trim();
+  const token=document.getElementById('sync-token').value.trim();
+  libSync.setCfg({url,token});
+  const btn=document.getElementById('sync-run-btn');
+  if(btn){btn.disabled=true;btn.textContent='Läuft…';}
+  syncRefreshStatus('Abgleich läuft…',false);
+  try{
+    const r=await libSync.run({});
+    if(r&&r.error){
+      syncRefreshStatus(r.error,true);
+    }else{
+      syncRefreshStatus();
+      // Fresh install: data just arrived → close the dialog so the library is visible
+      if(r&&r.downloaded&&books&&books.length){
+        setTimeout(syncClose,700);
+        toast('✅ '+books.length+' Bücher aus der Cloud geladen');
+      }
+    }
+  }catch(e){
+    syncRefreshStatus((e&&e.message)||'Sync fehlgeschlagen',true);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='☁️ Jetzt abgleichen';}
+    syncUpdateStartBlock();
+  }
+}
+
+// Keeps the cloud block on the start screen in step with the config
+function syncUpdateStartBlock(){
+  try{
+    const sub=document.getElementById('uz-cloud-sub');
+    const btn=document.getElementById('uz-cloud-btn');
+    if(!sub||!btn)return;
+    if(libSync.isConfigured()){
+      const meta=libSync.getMeta();
+      sub.textContent = meta&&meta.lastSync
+        ? 'Eingerichtet · zuletzt abgeglichen '+new Date(meta.lastSync).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'})
+        : 'Eingerichtet · noch nicht abgeglichen';
+      btn.textContent='☁️ Jetzt aus Cloud laden';
+      btn.setAttribute('onclick','syncPullNow()');
+    }else{
+      sub.textContent='Server-Adresse und Passwort eintragen – deine Bibliothek wird dann automatisch abgeglichen.';
+      btn.textContent='☁️ Cloud einrichten';
+      btn.setAttribute('onclick','syncOpen()');
+    }
+  }catch(_){}
+}
+
+// One-tap download straight from the start screen
+async function syncPullNow(){
+  const btn=document.getElementById('uz-cloud-btn');
+  if(btn){btn.disabled=true;btn.textContent='Lädt…';}
+  try{
+    const server=await libSync.pull();
+    if(server&&server.empty){
+      toast('☁️ Noch keine Daten in der Cloud');
+      return;
+    }
+    if(!server||!Array.isArray(server.books)||!server.books.length){
+      toast('☁️ Keine Bücher in der Cloud gefunden');
+      return;
+    }
+    await libSync.apply(server);
+    const m=libSync.getMeta();
+    m.lastSync=new Date().toISOString();
+    m.lastServerAt=server._savedAt||m.lastSync;
+    libSync.setMeta(m);
+    toast('✅ '+server.books.length+' Bücher aus der Cloud geladen');
+  }catch(e){
+    toast('❌ '+((e&&e.message)||'Laden fehlgeschlagen'));
+  }finally{
+    if(btn)btn.disabled=false;
+    syncUpdateStartBlock();
+  }
+}
+
+// Status listener keeps the modal line live
+try{ libSync.onStatus((m,e)=>syncRefreshStatus(m,e)); }catch(_){}
+
+// ── Sync lifecycle ────────────────────────────────────────
+(function initSync(){
+  try{
+    libSync.installWatcher();
+    syncUpdateStartBlock();
+    if(!libSync.isConfigured())return;
+    setTimeout(()=>{ libSync.run({silent:true}).catch(()=>{}); },1000);
+    document.addEventListener('visibilitychange',()=>{
+      try{
+        if(document.visibilityState==='hidden'){
+          if(libSync.isDirty())libSync.push().catch(()=>{});
+        }else{
+          libSync.run({silent:true}).catch(()=>{});
+        }
+      }catch(_){}
+    });
+  }catch(e){ console.warn('Sync init failed (app continues normally):',e); }
+})();
+
 // ══════════════════════════════════════════
 // PWA / SW
 // ══════════════════════════════════════════
 window.addEventListener('appinstalled',()=>toast('✅ App installiert!'));
 if('serviceWorker'in navigator){
-  const sw=`const C='ebib-v5';self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(['./']))));self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k))))));self.addEventListener('fetch',e=>{const u=e.request.url;if(u.includes('openlibrary')||u.includes('googleapis')||u.includes('covers.')){e.respondWith(fetch(e.request).catch(()=>new Response('',{status:503})));return;}e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>caches.match('./'))));});`;
+  const sw=`const C='ebib-v6';self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(['./']))));self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k))))));self.addEventListener('fetch',e=>{const u=e.request.url;if(u.includes('openlibrary')||u.includes('googleapis')||u.includes('covers.')){e.respondWith(fetch(e.request).catch(()=>new Response('',{status:503})));return;}e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>caches.match('./'))));});`;
   navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:'application/javascript'}))).catch(()=>{});
 }
 
